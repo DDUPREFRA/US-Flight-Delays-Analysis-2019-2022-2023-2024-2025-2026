@@ -83,3 +83,35 @@ Delay cause & distance analysis**
 
 
 Queries use multi-table joins, aggregations with HAVING filters, CASE WHEN logic, and date/time functions. See /sql for the full query set. 
+
+# Time Series Forecasting
+
+The daily delay rate series (2022-01-01 to 2026-03-31, 1,551 observations) was tested for stationarity before model fitting.
+
+**Stationarity (ADF Test)**
+- Daily series: ADF statistic = -5.3724, p-value = 0.000004 → **Stationary**
+
+![daily decomposition](plots/11_decomposition_daily.png)
+![daily ACF/PACF](plots/12_acf_pacf_daily.png)
+Weekly seasonality is clearly visible in the decomposition, informing a weekly seasonal order (m=7) in the SARIMA specification.
+
+**Model Comparison**
+
+Models were evaluated on two held-out quarters: Q1 2026 (90 days) and Q3 2025 (92 days), each trained only on data prior to the test window. `auto_arima` selected the same order — SARIMA(1,0,0)(2,0,1,7) — for both periods.
+
+| Model | Q1 2026 RMSE | Q1 2026 MAPE | Q3 2025 RMSE | Q3 2025 MAPE |
+|---|---|---|---|---|
+| Manual SARIMA(1,0,0)(1,0,0,7) | 20.50% | 79.10% | 18.25% | 80.45% |
+| Manual SARIMA(2,0,0)(1,0,0,7) | 19.59% | 74.27% | 16.51% | 73.01% |
+| Auto SARIMA(1,0,0)(2,0,1,7) | **8.27%** | 33.97% | 6.68% | 26.22% |
+| Prophet | 9.34% | 43.47% | **4.38%** | **16.81%** |
+| SARIMAX + Holiday Flag | 10.17% | **33.26%** | 5.46% | 19.38% |
+
+![forecast comparison](plots/25_forecast_comparison_both_periods.png)
+
+**Findings**
+
+- Manually-specified SARIMA orders performed poorly (RMSE 16-20%), underscoring the value of `auto_arima`'s stepwise AIC search over guessing parameters by hand.
+- No single model won both holdouts: Auto SARIMA was strongest on Q1 2026 (RMSE 8.27%), while Prophet was strongest on Q3 2025 (RMSE 4.38%) — suggesting the two models capture different aspects of the underlying structure, and neither is uniformly superior.
+- Adding a US holiday flag as an exogenous SARIMAX regressor gave **mixed results**: it improved Q3 2025 RMSE over plain Auto SARIMA (5.46% vs. 6.68%) but made Q1 2026 *worse* (10.17% vs. 8.27%), despite a small MAPE improvement that quarter. Holidays are not a clean, uniform win — a more honest finding than reporting only the period where it helped.
+- A Ljung-Box test on the Auto SARIMA residuals shows whiteness holds at lag 7 (p > 0.05) but breaks down at longer lags (14, 21, 28; all p < 0.05) in both holdouts — meaning some autocorrelation structure remains unexplained even by the best-performing model. This is consistent with the models' inability to capture sharp, event-driven delay spikes, which motivated testing whether external weather and flight-volume data could close that gap.
